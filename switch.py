@@ -5,6 +5,20 @@ import wrapper
 import threading
 import time
 from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interface_name
+from dataclasses import dataclass
+
+@dataclass
+class Switch:
+    prio: int
+    vlans: dict[int, (str, str)]
+
+@dataclass
+class Frame:
+    dest_mac: bytes
+    src_mac: bytes
+    vlan_id: int
+    data: bytes
+    len: int
 
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
@@ -35,24 +49,53 @@ def send_bdpu_every_sec():
         time.sleep(1)
 
 
+def get_vlans(switch_id, interfaces_names):
+    file = open('configs/switch{}.cfg'.format(switch_id), "r")
+    prio = int(file.readlines()[0].strip())
+    switch = {}
+    for l in file.readlines()[1:]:
+        name, vlan = l.split()
+        switch[interfaces_names[name]] = (name, vlan)
+
+    return Switch(prio, switch)
+
+
 def unicast(mac):
     return not (mac >> 40 & 0b00)
 
 
-def populate_cam(interfaces, cam_table, dest_mac, src_mac, port, data, len):
-    cam_table[src_mac] = port
-    if unicast(dest_mac):
-        if dest_mac in cam_table:
-            send_to_link(cam_table[dest_mac], data, len)
+def vlan_switch(interfaces, cam_table, frame, port, switch):
+    cam_table[frame.src_mac] = port
+    if unicast(frame.dest_mac):
+        if frame.dest_mac in cam_table:
+            v = switch.vlans[cam_table[frame.dest_mac]][1]
+
+            # TODO: Think about the frame that ALREADY has a tag
+            if v == "T":
+                tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
+                send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
+            elif int(v) == frame.vlan_id:
+                send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
         else:
             for p in interfaces:
                 if p != port:
-                    send_to_link(p, data, len)
+                    v = switch.vlans[p][1]
+                    if v == "T":
+                        tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
+                        send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
+                    elif int(v) == frame.vlan_id:
+                        send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
     else:
-        # trimite cadrul pe toate celelalte porturi
-        for p in interfaces:
+         for p in interfaces:
             if p != port:
-               send_to_link(p, data, len)
+                v = switch.vlans[p][1]
+                if v == "T":
+                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
+                    send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
+                elif int(v) == frame.vlan_id:
+                    send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
+
+
 
 def main():
     # init returns the max interface number. Our interfaces
@@ -69,10 +112,13 @@ def main():
     t = threading.Thread(target=send_bdpu_every_sec)
     t.start()
 
+    interfaces_names = {}
     # Printing interface names
     for i in interfaces:
         print(get_interface_name(i))
+        interfaces_names[get_interface_name(i)] = i
 
+    switch = get_vlans(switch_id, interfaces_names)
     cam_table = {}
 
     while True:
@@ -98,9 +144,10 @@ def main():
         print("Received frame of size {} on interface {}".format(length, interface), flush=True)
 
         # TODO: Implement forwarding with learning
-        populate_cam(interfaces, cam_table, dest_mac, src_mac, interfaces, data, len)
-
         # TODO: Implement VLAN support
+        frame = Frame(dest_mac, src_mac, vlan_id, data, length)
+        vlan_switch(interfaces, cam_table, frame, interface, switch)
+
         # TODO: Implement STP support
 
         # data is of type bytes.
