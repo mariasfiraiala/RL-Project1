@@ -8,7 +8,7 @@ from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interf
 
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
-    #dest_mac, src_mac, ethertype = struct.unpack('!6s6sH', data[:14])
+    # dest_mac, src_mac, ethertype = struct.unpack('!6s6sH', data[:14])
     dest_mac = data[0:6]
     src_mac = data[6:12]
     
@@ -34,6 +34,26 @@ def send_bdpu_every_sec():
         # TODO Send BDPU every second if necessary
         time.sleep(1)
 
+
+def unicast(mac):
+    return not (mac >> 40 & 0b00)
+
+
+def populate_cam(interfaces, cam_table, dest_mac, src_mac, port, data, len):
+    cam_table[src_mac] = port
+    if unicast(dest_mac):
+        if dest_mac in cam_table:
+            send_to_link(cam_table[dest_mac], data, len)
+        else:
+            for p in interfaces:
+                if p != port:
+                    send_to_link(p, data, len)
+    else:
+        # trimite cadrul pe toate celelalte porturi
+        for p in interfaces:
+            if p != port:
+               send_to_link(p, data, len)
+
 def main():
     # init returns the max interface number. Our interfaces
     # are 0, 1, 2, ..., init_ret value + 1
@@ -52,6 +72,8 @@ def main():
     # Printing interface names
     for i in interfaces:
         print(get_interface_name(i))
+
+    cam_table = {}
 
     while True:
         # Note that data is of type bytes([...]).
@@ -76,6 +98,8 @@ def main():
         print("Received frame of size {} on interface {}".format(length, interface), flush=True)
 
         # TODO: Implement forwarding with learning
+        populate_cam(interfaces, cam_table, dest_mac, src_mac, interfaces, data, len)
+
         # TODO: Implement VLAN support
         # TODO: Implement STP support
 
