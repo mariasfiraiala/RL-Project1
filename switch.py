@@ -51,9 +51,11 @@ def send_bdpu_every_sec():
 
 def get_vlans(switch_id, interfaces_names):
     file = open('configs/switch{}.cfg'.format(switch_id), "r")
-    prio = int(file.readlines()[0].strip())
+    lines = file.readlines()
+    prio = int(lines[0].strip())
     switch = {}
-    for l in file.readlines()[1:]:
+
+    for l in lines[1:]:
         name, vlan = l.split()
         switch[interfaces_names[name]] = (name, vlan)
 
@@ -61,39 +63,73 @@ def get_vlans(switch_id, interfaces_names):
 
 
 def unicast(mac):
-    return not (mac >> 40 & 0b00)
+    mac_int = int.from_bytes(mac, byteorder="big")
+    return ((mac_int >> 40) & 0b01 == 0)
 
 
 def vlan_switch(interfaces, cam_table, frame, port, switch):
     cam_table[frame.src_mac] = port
     if unicast(frame.dest_mac):
         if frame.dest_mac in cam_table:
-            v = switch.vlans[cam_table[frame.dest_mac]][1]
+            # get the VLAN id of the port we received the frame from
+            v_src = switch.vlans[cam_table[frame.src_mac]][1]
+            v_dst = switch.vlans[cam_table[frame.dest_mac]][1]
 
-            # TODO: Think about the frame that ALREADY has a tag
-            if v == "T":
+            # the frame comes on an access interface, from a host, meaning
+            # there's no vlan_id associated, so we'll have to associate the
+            # one of the interface
+            if frame.vlan_id == -1:
+                frame.vlan_id = int(v_src)
+                frame.len += 4
                 tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
-                send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
-            elif int(v) == frame.vlan_id:
+            else:
+                tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+
+            if v_dst == "T":
+                send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len)
+            elif int(v_dst) == frame.vlan_id:
                 send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
         else:
             for p in interfaces:
                 if p != port:
-                    v = switch.vlans[p][1]
-                    if v == "T":
+                    v_src = switch.vlans[cam_table[frame.src_mac]][1]
+                    v_dst = switch.vlans[p][1]
+
+                    # the frame comes on an access interface, from a host, meaning
+                    # there's no vlan_id associated, so we'll have to associate the
+                    # one of the interface
+                    if frame.vlan_id == -1:
+                        frame.vlan_id = int(v_src)
+                        frame.len += 4
                         tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
-                        send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
-                    elif int(v) == frame.vlan_id:
-                        send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
+                    else:
+                        tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+
+                    if v_dst == "T":
+                        send_to_link(p, tagged_frame, frame.len)
+                    elif int(v_dst) == frame.vlan_id:
+                        send_to_link(p, frame.data, frame.len)
     else:
-         for p in interfaces:
+        for p in interfaces:
             if p != port:
-                v = switch.vlans[p][1]
-                if v == "T":
+                v_src = switch.vlans[cam_table[frame.src_mac]][1]
+                v_dst = switch.vlans[p][1]
+
+                # the frame comes on an access interface, from a host, meaning
+                # there's no vlan_id associated, so we'll have to associate the
+                # one of the interface
+                if frame.vlan_id == -1:
+                    frame.vlan_id = int(v_src)
+                    frame.len += 4
                     tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
-                    send_to_link(cam_table[frame.dest_mac], tagged_frame, frame.len + 4)
-                elif int(v) == frame.vlan_id:
-                    send_to_link(cam_table[frame.dest_mac], frame.data, frame.len)
+                else:
+                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+
+                if v_dst == "T":
+                    send_to_link(p, tagged_frame, frame.len)
+                elif int(v_dst) == frame.vlan_id:
+                    print(v_dst)
+                    send_to_link(p, frame.data, frame.len)
 
 
 
@@ -129,6 +165,7 @@ def main():
         interface, data, length = recv_from_any_link()
 
         dest_mac, src_mac, ethertype, vlan_id = parse_ethernet_header(data)
+        frame = Frame(dest_mac, src_mac, vlan_id, data, length)
 
         # Print the MAC src and MAC dst in human readable format
         dest_mac = ':'.join(f'{b:02x}' for b in dest_mac)
@@ -145,7 +182,6 @@ def main():
 
         # TODO: Implement forwarding with learning
         # TODO: Implement VLAN support
-        frame = Frame(dest_mac, src_mac, vlan_id, data, length)
         vlan_switch(interfaces, cam_table, frame, interface, switch)
 
         # TODO: Implement STP support
