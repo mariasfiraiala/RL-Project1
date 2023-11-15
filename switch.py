@@ -6,6 +6,7 @@ import threading
 import time
 from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interface_name
 from dataclasses import dataclass
+import copy
 
 import pdb
 
@@ -73,58 +74,33 @@ def vlan_switch(interfaces, cam_table, frame, port, switch):
 
     if unicast(frame.dest_mac):
         if frame.dest_mac in cam_table:
-            # get the VLAN id of the port we received the frame from
             v_src = switch.vlans[cam_table[frame.src_mac]][1]
             v_dst = switch.vlans[cam_table[frame.dest_mac]][1]
 
-            # the frame comes on an access interface, from a host, meaning
-            # there's no vlan_id associated, so we'll have to associate the
-            # one of the interface
-            if v_dst == "T" or (int(v_dst) == frame.vlan_id and frame.vlan_id != -1) or (int(v_dst) == int(v_src) and frame.vlan_id == -1):
-                if frame.vlan_id == -1:
-                    frame.vlan_id = int(v_src)
-                    untagged_frame = frame.data
-                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
-                else:
-                    untagged_frame = frame.data[0:12] + frame.data[16:]
-                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+            copy_frame = copy.deepcopy(frame)
 
-                if v_dst == "T":
-                    send_to_link(cam_table[frame.dest_mac], tagged_frame, len(tagged_frame))
-                elif int(v_dst) == frame.vlan_id:
-                    send_to_link(cam_table[frame.dest_mac], untagged_frame, len(untagged_frame))
+            if frame.vlan_id == -1:
+                frame.vlan_id = int(v_src)
+                untagged_frame = frame.data
+                tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
+            else:
+                untagged_frame = frame.data[0:12] + frame.data[16:]
+                tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+
+            if v_dst == "T":
+                send_to_link(cam_table[frame.dest_mac], tagged_frame, len(tagged_frame))
+            elif int(v_dst) == frame.vlan_id:
+                send_to_link(cam_table[frame.dest_mac], untagged_frame, len(untagged_frame))
+            else:
+                frame = copy_frame
         else:
             for p in interfaces:
                 if p != port:
                     v_src = switch.vlans[cam_table[frame.src_mac]][1]
                     v_dst = switch.vlans[p][1]
 
-                    # the frame comes on an access interface, from a host, meaning
-                    # there's no vlan_id associated, so we'll have to associate the
-                    # one of the interface
-                    if v_dst == "T" or (int(v_dst) == frame.vlan_id and frame.vlan_id != -1) or (int(v_dst) == int(v_src) and frame.vlan_id == -1):
-                        if frame.vlan_id == -1:
-                            frame.vlan_id = int(v_src)
-                            untagged_frame = frame.data
-                            tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
-                        else:
-                            untagged_frame = frame.data[0:12] + frame.data[16:]
-                            tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+                    copy_frame = copy.deepcopy(frame)
 
-                        if v_dst == "T":
-                            send_to_link(p, tagged_frame, len(tagged_frame))
-                        elif int(v_dst) == frame.vlan_id:
-                            send_to_link(p, untagged_frame, len(untagged_frame))
-    else:
-        for p in interfaces:
-            if p != port:
-                v_src = switch.vlans[cam_table[frame.src_mac]][1]
-                v_dst = switch.vlans[p][1]
-
-                # the frame comes on an access interface, from a host, meaning
-                # there's no vlan_id associated, so we'll have to associate the
-                # one of the interface
-                if v_dst == "T" or (int(v_dst) == frame.vlan_id and frame.vlan_id != -1) or (int(v_dst) == int(v_src) and frame.vlan_id == -1):
                     if frame.vlan_id == -1:
                         frame.vlan_id = int(v_src)
                         untagged_frame = frame.data
@@ -137,6 +113,30 @@ def vlan_switch(interfaces, cam_table, frame, port, switch):
                         send_to_link(p, tagged_frame, len(tagged_frame))
                     elif int(v_dst) == frame.vlan_id:
                         send_to_link(p, untagged_frame, len(untagged_frame))
+                    else:
+                        frame = copy_frame
+    else:
+        for p in interfaces:
+            if p != port:
+                v_src = switch.vlans[cam_table[frame.src_mac]][1]
+                v_dst = switch.vlans[p][1]
+
+                copy_frame = copy.deepcopy(frame)
+
+                if frame.vlan_id == -1:
+                    frame.vlan_id = int(v_src)
+                    untagged_frame = frame.data
+                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[12:]
+                else:
+                    untagged_frame = frame.data[0:12] + frame.data[16:]
+                    tagged_frame = frame.data[0:12] + create_vlan_tag(frame.vlan_id) + frame.data[16:]
+
+                if v_dst == "T":
+                    send_to_link(p, tagged_frame, len(tagged_frame))
+                elif int(v_dst) == frame.vlan_id:
+                    send_to_link(p, untagged_frame, len(untagged_frame))
+                else:
+                    frame = copy_frame
 
 
 
