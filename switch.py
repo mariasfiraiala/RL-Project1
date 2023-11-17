@@ -55,9 +55,7 @@ def create_vlan_tag(vlan_id):
 
 def receive_bpdu(switch, data, port):
     global root_bridge_ID, root_path_cost, root_port
-    bpdu_root_bridge = int.from_bytes(data[21 : 25], byteorder='big')
-    bpdu_root_path = int.from_bytes(data[25 : 29], byteorder='big')
-    bpdu_bridge = int.from_bytes(data[29 : 33], byteorder='big')
+    bpdu_root_bridge, bpdu_root_path, bpdu_bridge = struct.unpack("!QIQ", data[22 : 42])
 
     if bpdu_root_bridge < root_bridge_ID:
         root_path_cost = bpdu_root_path + 10
@@ -95,9 +93,12 @@ def receive_bpdu(switch, data, port):
 
 
 def send_bpdu(port, switch):
-    dest_mac = "01:80:c2:00:00:00"
-    data = binascii.unhexlify(dest_mac.replace(':', '')) + switch.mac + struct.pack(">H", 33) + struct.pack(">3b", 0x42, 0x42, 0x03) + bytes(4) + struct.pack(">I", root_bridge_ID) + struct.pack(">I", root_path_cost) + struct.pack(">I", switch.prio)
+    dest_mac =  binascii.unhexlify("01:80:c2:00:00:00".replace(':', ''))
+    macs = dest_mac + switch.mac
+    llc = struct.pack("!H3b", 38, 0x42, 0x42, 0x03)
+    bpdu = bytes(5) + struct.pack("!QIQ", root_bridge_ID, root_path_cost, switch.prio) + bytes(10)
 
+    data = macs + llc + bpdu
     send_to_link(port, data, len(data))
 
 
