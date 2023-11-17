@@ -15,19 +15,18 @@ root_bridge_ID = 0
 root_path_cost = 0
 root_port = 0
 
-@dataclass
 class Switch:
-    prio: int
-    vlans: dict[int, (str, str, str)]
-    is_root: bool
-    mac: bytes
+    def __init__(self, prio, vlans, mac):
+        self.prio = prio
+        self.vlans = vlans
+        self.mac = mac
 
-@dataclass
 class Frame:
-    dest_mac: bytes
-    src_mac: bytes
-    vlan_id: int
-    data: bytes
+    def __init__(self, dest_mac, src_mac, vlan_id, data):
+        self.dest_mac = dest_mac
+        self.src_mac = src_mac
+        self.vlan_id = vlan_id
+        self.data = data
 
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
@@ -103,12 +102,11 @@ def send_bpdu(port, switch):
 
 
 def send_bdpu_every_sec(switch):
-    if root_bridge_ID == switch.prio:
-        while True:
-            for port, info in switch.vlans.items():
-                if info[1] == "T":
-                    send_bpdu(port, switch)
-            time.sleep(1)
+    while root_bridge_ID == switch.prio:
+        for port, info in switch.vlans.items():
+            if info[1] == "T":
+                send_bpdu(port, switch)
+        time.sleep(1)
 
 
 def initialize_bridge(switch):
@@ -138,7 +136,7 @@ def get_vlans(switch_id, interfaces_names):
         name, vlan = l.split()
         vlans[interfaces_names[name]] = (name, vlan, "")
 
-    return Switch(prio, vlans, True, None)
+    return Switch(prio, vlans, None)
 
 
 def unicast(mac):
@@ -147,6 +145,9 @@ def unicast(mac):
 
 
 def vlan_switch(interfaces, cam_table, frame, port, switch):
+    if switch.vlans[port][2] == "BLOCKED":
+        return
+
     cam_table[frame.src_mac] = port
 
     if unicast(frame.dest_mac):
@@ -236,13 +237,9 @@ def main():
     num_interfaces = wrapper.init(sys.argv[2:])
     interfaces = range(0, num_interfaces)
 
-    print("# Starting switch with id {}".format(switch_id), flush=True)
-    print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
-
     interfaces_names = {}
     # Printing interface names
     for i in interfaces:
-        print(get_interface_name(i))
         interfaces_names[get_interface_name(i)] = i
 
     switch = get_vlans(switch_id, interfaces_names)
@@ -266,12 +263,6 @@ def main():
         if dest_mac == "01:80:c2:00:00:00":
             receive_bpdu(switch, data, interface)
         else:
-            print(f'Destination MAC: {dest_mac}')
-            print(f'Source MAC: {src_mac}')
-            print(f'EtherType: {ethertype}')
-
-            print("Received frame of size {} on interface {}".format(length, interface), flush=True)
-
             vlan_switch(interfaces, cam_table, frame, interface, switch)
     t.join()
 
