@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+
 import sys
 import struct
 import wrapper
@@ -60,12 +61,15 @@ def receive_bpdu(switch, data, port):
         root_path_cost = bpdu_root_path + 10
         root_port = port
 
+        # If we were root bridge, and we aren't anymore, we should block all the ports
+        # that aren't the root port
         if switch.prio == root_bridge_ID:
             for port, info in switch.vlans.items():
                 if info[1] == "T" and port != root_port:
                     new_info = (info[0], info[1], "BLOCKED")
                     switch.vlans[port] = new_info
 
+        # Update the root bridge ID with the new winner
         root_bridge_ID = bpdu_root_bridge
 
         switch.vlans[root_port] = (switch.vlans[root_port][0], switch.vlans[root_port][1], "ROOT")
@@ -132,6 +136,8 @@ def get_vlans(switch_id, interfaces_names):
     prio = int(lines[0].strip())
     vlans = {}
 
+    # Get some useful information about the ports, their names
+    # and their VLAN
     for l in lines[1:]:
         name, vlan = l.split()
         vlans[interfaces_names[name]] = (name, vlan, "")
@@ -145,13 +151,18 @@ def unicast(mac):
 
 
 def vlan_switch(interfaces, cam_table, frame, port, switch):
+    # We received a frame on a blocked port, impossible!, we drop it
     if switch.vlans[port][2] == "BLOCKED":
         return
 
     cam_table[frame.src_mac] = port
 
+    # If the frame is unicast, we should send it only to the destination
+    # (if we have its MAC address already stored)
     if unicast(frame.dest_mac):
         if frame.dest_mac in cam_table:
+            # Get the vlans of both the source and the destination ports, plus
+            # the state of the link (blocked, designated, root)
             v_src = switch.vlans[cam_table[frame.src_mac]][1]
             v_dst = switch.vlans[cam_table[frame.dest_mac]][1]
             state = switch.vlans[cam_table[frame.dest_mac]][2]
@@ -175,6 +186,10 @@ def vlan_switch(interfaces, cam_table, frame, port, switch):
                 send_to_link(cam_table[frame.dest_mac], untagged_frame, len(untagged_frame))
             else:
                 frame = copy_frame
+
+        # When we don't have the MAC address of the destination already stored, we should
+        # flood the entire network in order to make sure the packet eventually reaches the
+        # destination
         else:
             for p in interfaces:
                 if p != port:
@@ -201,6 +216,7 @@ def vlan_switch(interfaces, cam_table, frame, port, switch):
                         send_to_link(p, untagged_frame, len(untagged_frame))
                     else:
                         frame = copy_frame
+    # The frame is not unicast, so we flood it
     else:
         for p in interfaces:
             if p != port:
@@ -237,8 +253,9 @@ def main():
     num_interfaces = wrapper.init(sys.argv[2:])
     interfaces = range(0, num_interfaces)
 
+    # Associate the interface name with their ID, useful for
+    # constructing the CAM table and VLAN switching
     interfaces_names = {}
-    # Printing interface names
     for i in interfaces:
         interfaces_names[get_interface_name(i)] = i
 
@@ -260,6 +277,7 @@ def main():
         dest_mac = ':'.join(f'{b:02x}' for b in dest_mac)
         src_mac = ':'.join(f'{b:02x}' for b in src_mac)
 
+        # Check if we received a BDPU packet or something else
         if dest_mac == "01:80:c2:00:00:00":
             receive_bpdu(switch, data, interface)
         else:
